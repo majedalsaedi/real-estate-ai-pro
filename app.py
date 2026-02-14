@@ -1,34 +1,32 @@
 import streamlit as st
 import pandas as pd
-import datetime
+import gspread
+from google.oauth2 import service_account
 
 st.set_page_config(page_title="Real Estate AI Pro", layout="wide")
 
-# ====== Dark Theme ======
-st.markdown("""
-    <style>
-    body {
-        background-color: #0E1117;
-        color: white;
-    }
-    .stMetric {
-        background-color: #1C1F26;
-        padding: 15px;
-        border-radius: 10px;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("🏢 نظام إدارة العقارات الاحترافي")
 
-# ====== Data ======
-if "properties" not in st.session_state:
-    st.session_state.properties = pd.DataFrame(columns=[
-        "اسم العقار",
-        "عدد الوحدات",
-        "الوحدات المؤجرة",
-        "الإيجار الشهري"
-    ])
+# ====== Google Sheets Connection ======
+credentials = service_account.Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"],
+    scopes=["https://www.googleapis.com/auth/spreadsheets"]
+)
+
+gc = gspread.authorize(credentials)
+sheet = gc.open("RealEstateDB").sheet1
+
+# ====== Load Data ======
+@st.cache_data(ttl=60)
+def load_data():
+    data = sheet.get_all_records()
+    return pd.DataFrame(data)
+
+def save_data(df):
+    sheet.clear()
+    sheet.update([df.columns.values.tolist()] + df.values.tolist())
+
+df = load_data()
 
 menu = st.sidebar.radio("القائمة الرئيسية", [
     "لوحة التحكم",
@@ -37,8 +35,6 @@ menu = st.sidebar.radio("القائمة الرئيسية", [
 
 # ====== Dashboard ======
 if menu == "لوحة التحكم":
-
-    df = st.session_state.properties
 
     total_properties = len(df)
     total_units = df["عدد الوحدات"].sum() if not df.empty else 0
@@ -75,9 +71,13 @@ if menu == "إدارة العقارات":
             "الوحدات المؤجرة": rented,
             "الإيجار الشهري": rent
         }])
-        st.session_state.properties = pd.concat([st.session_state.properties, new_row], ignore_index=True)
+
+        df = pd.concat([df, new_row], ignore_index=True)
+        save_data(df)
         st.success("تمت إضافة العقار بنجاح")
+        st.cache_data.clear()
+        st.rerun()
 
     st.divider()
     st.subheader("قائمة العقارات")
-    st.dataframe(st.session_state.properties, use_container_width=True)
+    st.dataframe(df, use_container_width=True)
