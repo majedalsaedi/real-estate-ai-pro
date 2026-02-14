@@ -14,7 +14,7 @@ credentials = service_account.Credentials.from_service_account_info(
 )
 
 gc = gspread.authorize(credentials)
-sheet = gc.open("RealEstateDB").sheet1
+sheet = gc.open_by_key("18c7cdOIjNcFkv2f8wUyV-V_K-AoKsbZbaRkVDlRQMuI").sheet1
 
 # ====== Load Data ======
 @st.cache_data(ttl=60)
