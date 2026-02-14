@@ -1,83 +1,85 @@
 import streamlit as st
 import pandas as pd
-import gspread
-from google.oauth2 import service_account
+import plotly.express as px
 
-st.set_page_config(page_title="Real Estate AI Pro", layout="wide")
+st.set_page_config(layout="wide", page_title="Executive Dashboard")
 
-st.title("🏢 نظام إدارة العقارات الاحترافي")
+# ==========================
+# روابط CSV
+# ==========================
+properties_url = "https://docs.google.com/spreadsheets/d/118TQGBJDgeoPQpDJAPEbl9HkmfandXFu/export?format=csv&gid=1036124252"
+units_url = "https://docs.google.com/spreadsheets/d/118TQGBJDgeoPQpDJAPEbl9HkmfandXFu/export?format=csv&gid=1895018394"
+payments_url = "https://docs.google.com/spreadsheets/d/118TQGBJDgeoPQpDJAPEbl9HkmfandXFu/export?format=csv&gid=1506718084"
+maintenance_url = "https://docs.google.com/spreadsheets/d/118TQGBJDgeoPQpDJAPEbl9HkmfandXFu/export?format=csv&gid=2041686772"
 
-# ====== Google Sheets Connection ======
-credentials = service_account.Credentials.from_service_account_info(
-    st.secrets["gcp_service_account"],
-    scopes=["https://www.googleapis.com/auth/spreadsheets"]
-)
+@st.cache_data
+def load_data(url):
+    return pd.read_csv(url)
 
-gc = gspread.authorize(credentials)
-sheet = gc.open_by_key("18c7cdOIjNcFkv2f8wUyV-V_K-AoKsbZbaRkVDlRQMuI").sheet1
+properties = load_data(properties_url)
+units = load_data(units_url)
+payments = load_data(payments_url)
+maintenance = load_data(maintenance_url)
 
-# ====== Load Data ======
-@st.cache_data(ttl=60)
-def load_data():
-    data = sheet.get_all_records()
-    return pd.DataFrame(data)
+st.title("🏢 Executive Real Estate Dashboard")
 
-def save_data(df):
-    sheet.clear()
-    sheet.update([df.columns.values.tolist()] + df.values.tolist())
+# ==========================
+# فلتر الشهر
+# ==========================
+selected_month = st.selectbox("اختر الشهر", payments["الشهر"].unique())
 
-df = load_data()
+payments_filtered = payments[payments["الشهر"] == selected_month]
+maintenance_filtered = maintenance[maintenance["الشهر"] == selected_month]
 
-menu = st.sidebar.radio("القائمة الرئيسية", [
-    "لوحة التحكم",
-    "إدارة العقارات"
-])
+# ==========================
+# KPIs
+# ==========================
+total_income = payments_filtered["الدخل"].sum()
+total_maintenance = maintenance_filtered["التكلفة"].sum()
+net_profit = total_income - total_maintenance
+occupied_units = len(units[units["الحالة"] == "مؤجرة"])
+total_units = len(units)
+occupancy_rate = (occupied_units / total_units) * 100 if total_units > 0 else 0
 
-# ====== Dashboard ======
-if menu == "لوحة التحكم":
+col1, col2, col3, col4 = st.columns(4)
 
-    total_properties = len(df)
-    total_units = df["عدد الوحدات"].sum() if not df.empty else 0
-    rented_units = df["الوحدات المؤجرة"].sum() if not df.empty else 0
-    occupancy = (rented_units / total_units * 100) if total_units > 0 else 0
-    revenue = (df["الوحدات المؤجرة"] * df["الإيجار الشهري"]).sum() if not df.empty else 0
+col1.metric("إجمالي الدخل", f"{total_income:,.0f}")
+col2.metric("إجمالي الصيانة", f"{total_maintenance:,.0f}")
+col3.metric("صافي الربح", f"{net_profit:,.0f}")
+col4.metric("نسبة الإشغال", f"{occupancy_rate:.1f}%")
 
-    col1, col2, col3, col4 = st.columns(4)
+st.divider()
 
-    col1.metric("إجمالي العقارات", total_properties)
-    col2.metric("إجمالي الوحدات", total_units)
-    col3.metric("نسبة الإشغال", f"{occupancy:.1f}%")
-    col4.metric("الإيراد الشهري", f"{revenue:,.0f}")
+# ==========================
+# الرسوم البيانية
+# ==========================
 
-    st.divider()
+# 1 خطي للدخل
+fig1 = px.line(payments, x="الشهر", y="الدخل", title="اتجاه الدخل")
+st.plotly_chart(fig1, use_container_width=True)
 
-    if not df.empty:
-        st.bar_chart(df.set_index("اسم العقار")["الإيجار الشهري"])
+# 2 مقارنة دخل وصيانة
+merged_income = payments.groupby("الشهر")["الدخل"].sum().reset_index()
+merged_maint = maintenance.groupby("الشهر")["التكلفة"].sum().reset_index()
 
-# ====== Property Management ======
-if menu == "إدارة العقارات":
+compare = pd.merge(merged_income, merged_maint, on="الشهر")
 
-    st.subheader("إضافة عقار جديد")
+fig2 = px.bar(compare, x="الشهر", y=["الدخل", "التكلفة"],
+              barmode="group",
+              title="دخل مقابل صيانة")
 
-    name = st.text_input("اسم العقار")
-    units = st.number_input("عدد الوحدات", min_value=1, step=1)
-    rented = st.number_input("الوحدات المؤجرة", min_value=0, step=1)
-    rent = st.number_input("الإيجار الشهري للوحدة", min_value=0, step=100)
+st.plotly_chart(fig2, use_container_width=True)
 
-    if st.button("إضافة"):
-        new_row = pd.DataFrame([{
-            "اسم العقار": name,
-            "عدد الوحدات": units,
-            "الوحدات المؤجرة": rented,
-            "الإيجار الشهري": rent
-        }])
+# 3 Pie توزيع الوحدات
+fig3 = px.pie(units, names="الحالة", title="توزيع الوحدات")
+st.plotly_chart(fig3, use_container_width=True)
 
-        df = pd.concat([df, new_row], ignore_index=True)
-        save_data(df)
-        st.success("تمت إضافة العقار بنجاح")
-        st.cache_data.clear()
-        st.rerun()
+# 4 أداء العقارات
+property_income = payments.groupby("رقم_العقار")["الدخل"].sum().reset_index()
 
-    st.divider()
-    st.subheader("قائمة العقارات")
-    st.dataframe(df, use_container_width=True)
+fig4 = px.bar(property_income,
+              x="رقم_العقار",
+              y="الدخل",
+              title="أداء كل عقار")
+
+st.plotly_chart(fig4, use_container_width=True)
